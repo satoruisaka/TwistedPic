@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+
+# Outputs
+outputs/
+outputs/*.png
+outputs/*.jpg
+outputs/*.jpeg
+
+# Documentation and screenshots are tracked, but ignore docs folder
+docs/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# HuggingFace cache (optional - comment out if you want to commit)
+models/
+
+# Temporary files
+temp_*/
+*.tmp
