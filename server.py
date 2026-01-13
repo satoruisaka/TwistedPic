@@ -1,5 +1,5 @@
 """
-server.py - Flask Web Server for TwistedPic
+server.py - FastAPI ASGI Server for TwistedPic
 
 Provides REST API endpoints for:
 - Health checks (Ollama + TwistedPair status)
@@ -11,8 +11,13 @@ Provides REST API endpoints for:
 import os
 import base64
 from io import BytesIO
-from flask import Flask, render_template, request, jsonify
-from flask_cors import CORS
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional
 from datetime import datetime
 import traceback
 
@@ -22,14 +27,48 @@ from twistedpair_client import TwistedPairClient
 from image_generator import ImageGenerator
 
 
-# Initialize Flask app
-app = Flask(__name__)
-CORS(app)  # Enable CORS for local development
+# Initialize FastAPI app
+app = FastAPI(title="TwistedPic", description="Distorted Image Generation API")
+
+# Enable CORS for local development
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Setup templates
+templates = Jinja2Templates(directory="templates")
+
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Global instances (initialized on startup)
 model_registry = None
 twistedpair_client = None
 image_generator = None
+
+
+# Pydantic models for request validation
+class GenerateImageRequest(BaseModel):
+    user_prompt: str
+    use_distortion: bool = True
+    distortion_mode: str = "echo_er"
+    distortion_tone: str = "neutral"
+    distortion_gain: int = 5
+    distortion_model: Optional[str] = None
+    use_refinement: bool = True
+    image_model: str = "sd3_large"  # SD 3.5 Large - best quality + fast on RTX 5090
+    num_inference_steps: int = 30
+    guidance_scale: float = 7.5
+    resolution_preset: str = "landscape"
+    seed: Optional[int] = None
+    use_random_seed: bool = False
 
 
 def check_ollama_health() -> bool:
@@ -56,50 +95,54 @@ def get_ollama_models() -> list[str]:
     return []
 
 
-@app.before_request
-def initialize_components():
-    """Initialize components on first request (lazy loading)."""
+@app.on_event("startup")
+async def startup_event():
+    """Initialize components on startup."""
     global model_registry, twistedpair_client, image_generator
     
-    if model_registry is None:
-        print("Initializing TwistedPic components...")
-        try:
-            # Initialize model registry (this loads SDXL, may take time)
-            model_registry = initialize_default_models(device="cuda", verbose=True)
-            
-            # Initialize TwistedPair client
-            twistedpair_client = TwistedPairClient(verbose=False)
-            
-            # Initialize image generator
-            image_generator = ImageGenerator(
-                model_registry=model_registry,
-                twistedpair_client=twistedpair_client,
-                verbose=True
-            )
-            
-            print("✅ All components initialized successfully")
+    print("Initializing TwistedPic components...")
+    try:
+        # Initialize empty model registry (lazy loading - no models loaded yet)
+        # Models will be loaded on-demand when first generation request arrives
+        # This prevents GPU memory occupation until actually needed
+        from model_registry import ModelRegistry
+        model_registry = ModelRegistry(device="cuda", verbose=True)
+        print("[Startup] Model registry initialized (no models loaded yet - lazy loading enabled)")
         
-        except Exception as e:
-            print(f"❌ Component initialization failed: {e}")
-            traceback.print_exc()
+        # Initialize TwistedPair client
+        twistedpair_client = TwistedPairClient(verbose=False)
+        
+        # Initialize image generator
+        image_generator = ImageGenerator(
+            model_registry=model_registry,
+            twistedpair_client=twistedpair_client,
+            verbose=True
+        )
+        
+        print("✅ All components initialized successfully")
+        print("💡 GPU memory will remain free until first image generation request")
+    
+    except Exception as e:
+        print(f"❌ Component initialization failed: {e}")
+        traceback.print_exc()
 
 
 # ============================================================================
 # Web Routes
 # ============================================================================
 
-@app.route('/')
-def index():
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
     """Serve main web UI."""
-    return render_template('index.html')
+    return templates.TemplateResponse("index.html", {"request": request})
 
 
 # ============================================================================
 # API Endpoints
 # ============================================================================
 
-@app.route('/api/health', methods=['GET'])
-def health_check():
+@app.get('/api/health')
+async def health_check():
     """
     Check health of all services.
     
@@ -133,7 +176,7 @@ def health_check():
     # Overall status
     overall_status = "healthy" if (ollama_healthy and twistedpair_healthy and image_models_loaded) else "degraded"
     
-    return jsonify({
+    return {
         "status": overall_status,
         "timestamp": datetime.now().isoformat(),
         "services": {
@@ -149,11 +192,11 @@ def health_check():
                 "models": available_image_models
             }
         }
-    })
+    }
 
 
-@app.route('/api/config', methods=['GET'])
-def get_config():
+@app.get('/api/config')
+async def get_config():
     """
     Get configuration for UI (modes, tones, resolutions, etc.).
     
@@ -176,7 +219,7 @@ def get_config():
             }
         }
     """
-    return jsonify({
+    return {
         "distortion": {
             "modes": config.DISTORTION_MODES,
             "tones": config.DISTORTION_TONES,
@@ -196,15 +239,15 @@ def get_config():
             "default_steps": config.DEFAULT_IMAGE_PARAMS["num_inference_steps"],
             "default_cfg": config.DEFAULT_IMAGE_PARAMS["guidance_scale"]
         }
-    })
+    }
 
 
-@app.route('/api/generate', methods=['POST'])
-def generate_image():
+@app.post('/api/generate')
+async def generate_image(data: GenerateImageRequest):
     """
     Generate distorted image from user prompt.
     
-    Request body:
+    Request body (validated by GenerateImageRequest model):
         {
             "user_prompt": "...",
             "use_distortion": true,
@@ -237,53 +280,36 @@ def generate_image():
         }
     """
     try:
-        # Parse request
-        data = request.get_json()
-        
-        # Extract parameters with defaults
-        user_prompt = data.get('user_prompt', '').strip()
+        # Validate user prompt
+        user_prompt = data.user_prompt.strip()
         if not user_prompt:
-            return jsonify({"success": False, "error": "User prompt is required"}), 400
-        
-        use_distortion = data.get('use_distortion', True)  # Default to True
-        distortion_mode = data.get('distortion_mode', config.DEFAULT_DISTORTION['mode'])
-        distortion_tone = data.get('distortion_tone', config.DEFAULT_DISTORTION['tone'])
-        distortion_gain = int(data.get('distortion_gain', config.DEFAULT_DISTORTION['gain']))
-        distortion_model = data.get('distortion_model')  # Optional
-        
-        num_inference_steps = int(data.get('num_inference_steps', 30))
-        guidance_scale = float(data.get('guidance_scale', 7.5))
-        resolution_preset = data.get('resolution_preset', 'landscape')
-        seed = data.get('seed')
-        if seed is not None:
-            seed = int(seed)
-        use_random_seed = data.get('use_random_seed', False)
+            raise HTTPException(status_code=400, detail="User prompt is required")
         
         # Get resolution from preset
-        resolution = config.RESOLUTIONS.get(resolution_preset, config.RESOLUTIONS['landscape'])
+        resolution = config.RESOLUTIONS.get(data.resolution_preset, config.RESOLUTIONS['landscape'])
         
         # Validate components initialized
         if not image_generator:
-            return jsonify({
-                "success": False,
-                "error": "Image generator not initialized. Check server logs."
-            }), 500
+            raise HTTPException(
+                status_code=500,
+                detail="Image generator not initialized. Check server logs."
+            )
         
         # Generate image
         result = image_generator.generate(
             user_prompt=user_prompt,
-            use_distortion=use_distortion,
-            use_refinement=data.get('use_refinement', True),  # Default to True
-            distortion_mode=distortion_mode,
-            distortion_tone=distortion_tone,
-            distortion_gain=distortion_gain,
-            distortion_model=distortion_model,
-            image_model="sdxl_base",
-            num_inference_steps=num_inference_steps,
-            guidance_scale=guidance_scale,
+            use_distortion=data.use_distortion,
+            use_refinement=data.use_refinement,
+            distortion_mode=data.distortion_mode,
+            distortion_tone=data.distortion_tone,
+            distortion_gain=data.distortion_gain,
+            distortion_model=data.distortion_model,
+            image_model=data.image_model,
+            num_inference_steps=data.num_inference_steps,
+            guidance_scale=data.guidance_scale,
             resolution=resolution,
-            seed=seed,
-            use_random_seed=use_random_seed
+            seed=data.seed,
+            use_random_seed=data.use_random_seed
         )
         
         # Convert image to base64 for web display
@@ -301,7 +327,7 @@ def generate_image():
         if refined_keywords is None:
             refined_keywords = ''
         
-        return jsonify({
+        return {
             "success": True,
             "image_base64": image_base64,
             "distorted_prompt": str(distorted_prompt),
@@ -310,40 +336,20 @@ def generate_image():
             "metadata": result['metadata'],
             "image_path": result['image_path'],
             "metadata_path": result['metadata_path']
-        })
+        }
+    
+    except HTTPException:
+        raise
     
     except ConnectionError as e:
-        return jsonify({
-            "success": False,
-            "error": f"TwistedPair server unavailable: {str(e)}"
-        }), 503
+        raise HTTPException(status_code=503, detail=f"TwistedPair server unavailable: {str(e)}")
     
     except ValueError as e:
-        return jsonify({
-            "success": False,
-            "error": f"Invalid parameters: {str(e)}"
-        }), 400
+        raise HTTPException(status_code=400, detail=f"Invalid parameters: {str(e)}")
     
     except Exception as e:
         traceback.print_exc()
-        return jsonify({
-            "success": False,
-            "error": f"Generation failed: {str(e)}"
-        }), 500
-
-
-# ============================================================================
-# Error Handlers
-# ============================================================================
-
-@app.errorhandler(404)
-def not_found(e):
-    return jsonify({"error": "Endpoint not found"}), 404
-
-
-@app.errorhandler(500)
-def internal_error(e):
-    return jsonify({"error": "Internal server error"}), 500
+        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
 
 
 # ============================================================================
@@ -351,12 +357,15 @@ def internal_error(e):
 # ============================================================================
 
 if __name__ == '__main__':
+    import uvicorn
+    
     print(f"""
 ╔═══════════════════════════════════════════════════════════╗
 ║                     TwistedPic Server                     ║
 ╠═══════════════════════════════════════════════════════════╣
 ║  Web UI:   http://localhost:{config.FLASK_PORT}                       ║
-║  API Docs: http://localhost:{config.FLASK_PORT}/api/health            ║
+║  API Docs: http://localhost:{config.FLASK_PORT}/docs                  ║
+║  Health:   http://localhost:{config.FLASK_PORT}/api/health            ║
 ╠═══════════════════════════════════════════════════════════╣
 ║  Prerequisites:                                           ║
 ║    • Ollama server running on {config.OLLAMA_URL}     ║
@@ -365,8 +374,9 @@ if __name__ == '__main__':
 ╚═══════════════════════════════════════════════════════════╝
     """)
     
-    app.run(
+    uvicorn.run(
+        "server:app",
         host=config.FLASK_HOST,
         port=config.FLASK_PORT,
-        debug=config.FLASK_DEBUG
+        reload=True
     )

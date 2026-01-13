@@ -41,7 +41,31 @@ uvicorn server:app --host 0.0.0.0 --port 8001
 - Minimum 8GB VRAM recommended
 - 20GB disk space for SDXL model download
 
-### 3. Ollama Models
+### 3. GPU Memory Management
+
+TwistedPic and Ollama both use GPU resources. By default, TwistedPic automatically cleans up GPU memory after each image generation to prevent monopolizing the GPU and blocking Ollama from using it.
+
+**Configuration options in [config.py](config.py):**
+
+```python
+# Basic cleanup (recommended - enabled by default)
+GPU_MEMORY_CLEANUP = True  # Clears CUDA cache after generation
+
+# Advanced cleanup (only if Ollama still can't access GPU)
+UNLOAD_MODEL_AFTER_GENERATION = False  # Moves model to CPU between generations
+```
+
+**Symptoms of GPU contention:**
+- Ollama runs at 100% CPU usage (instead of using GPU)
+- TwistedPic works fine but Ollama becomes very slow
+- Need to restart both services to fix
+
+**Solutions:**
+1. **Basic (enabled by default)**: `GPU_MEMORY_CLEANUP = True` - Usually sufficient
+2. **Advanced**: Set `UNLOAD_MODEL_AFTER_GENERATION = True` - Slower but frees more GPU memory
+3. **Alternative**: Use smaller image models (SDXL instead of SD3 Large) to reduce GPU memory usage
+
+### 4. Ollama Models
 Install at least one model:
 ```powershell
 ollama pull mistral:latest
