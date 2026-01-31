@@ -1,14 +1,18 @@
-# TwistedDream Requirements (same as TwistedPic)
-# The following are the core dependencies for running TwistedDream for latest GPU (e.g., RTX 4090, RTX 5090)
-# Before running this file, ensure you have installed PyTorch with CUDA 12.8 support:
+# TwistedPic Requirements
+# Python dependencies for distorted image generation
+# Aligned with DreamSprout versions (Dec 2025)
+
+# Core ML/Image Generation (matching DreamSprout)
+
+# For latest GPU (e.g., RTX 4090, RTX 5090), run the following first separately
 # pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 
-# xformers (the current version is not compatible with CUDA 12.8)
 diffusers
 transformers
 accelerate
 safetensors
 huggingface-hub
+# xformers
 compel
 uvicorn
 fastapi
@@ -27,10 +31,20 @@ python-dateutil
 # huggingface-hub==0.36.0
 # xformers==0.0.33.post1  # Memory efficient attention (recommended for SDXL)
 # compel==2.3.1  # Long prompt support and prompt weighting
+
+# Web Framework
+# Flask==3.1.2
 # Jinja2==3.1.6
-# uvicorn
-# fastapi
+# flask-cors==4.0.0
+
+# HTTP Client
 # requests==2.32.5
+
+# Image Processing
 # Pillow==10.1.0
+
+# Data Validation (for API endpoints)
 # pydantic==2.5.0
+
+# Utilities
 # python-dateutil==2.8.2

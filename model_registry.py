@@ -77,7 +77,8 @@ class ModelRegistry:
                     pipe = pipeline_class.from_pretrained(
                         model_id,
                         torch_dtype=dtype,
-                        use_safetensors=True
+                        use_safetensors=True,
+                        local_files_only=True  # Use cached models, avoid external downloads
                     ).to(self.device)
                     
                     # Enable memory efficient attention for Flux/SD3
@@ -94,7 +95,8 @@ class ModelRegistry:
                         model_id,
                         torch_dtype=dtype,
                         use_safetensors=True,
-                        variant="fp16"
+                        variant="fp16",
+                        local_files_only=True  # Use cached models, avoid external downloads
                     ).to(self.device)
                     
                     # Enable optimizations for SDXL
@@ -114,7 +116,8 @@ class ModelRegistry:
                     model_id,
                     torch_dtype=dtype,
                     use_safetensors=True,
-                    low_cpu_mem_usage=False
+                    low_cpu_mem_usage=False,
+                    local_files_only=True  # Use cached models, avoid external downloads
                 ).to(self.device)
             
             # Store generation parameters

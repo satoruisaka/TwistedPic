@@ -11,12 +11,15 @@ env/
 
 # Outputs
 outputs/
-outputs/*.png
-outputs/*.jpg
-outputs/*.jpeg
+TwistedDream/outputs/
+TwistedDream2/outputs/
 
 # Documentation and screenshots are tracked, but ignore docs folder
 docs/
+
+# Markdown files except README
+*.md
+!README.md
 
 # IDEs
 .vscode/
